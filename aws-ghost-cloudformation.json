@@ -1,0 +1,186 @@
+{
+  "AWSTemplateFormatVersion":"2010-09-09",
+  "Description":"Create Blog with Ghost",
+  "Parameters":{
+    "KeyName":{
+      "Description":"Name of an existing EC2 KeyPair to enable SSH access to the instances",
+      "Type":"AWS::EC2::KeyPair::KeyName",
+      "ConstraintDescription":"Must be the name of an existing EC2 KeyPair."
+    },
+    "AvailabilityZone":{
+      "ConstraintDescription":"Must be a valid availability zone in your region",
+      "Default":"eu-west-1a",
+      "Description":"Availability zone to launch the cluster in",
+      "Type":"AWS::EC2::AvailabilityZone::Name"
+    },
+    "InstanceType":{
+      "Description":"EC2 instance type",
+      "Default":"t2.micro",
+      "Type":"String",
+      "AllowedValues":[
+        "t2.micro",
+        "c3.xlarge"
+      ],
+      "ConstraintDescription":"Must contain only alphanumeric characters."
+    },
+    "Snapshot":{
+      "Description":"Snapshot to create the volume from",
+      "Type":"String"
+    }    
+  },
+  "Mappings":{
+    "AWSInstanceType2Arch":{
+      "c3.xlarge":{
+        "Arch":"HVM64"
+      },
+      "t2.micro":{
+        "Arch":"HVM64"
+      }
+    },
+    "AWSRegionArch2AMI":{
+      "eu-west-1":{
+        "HVM64":"ami-bff32ccc"
+      }
+    }
+  },
+  "Resources":{
+    "VolumeData":{
+      "Type":"AWS::EC2::Volume",
+      "Properties":{
+        "AvailabilityZone":{
+          "Ref":"AvailabilityZone"
+        },
+        "Size":"50",
+        "VolumeType":"gp2",
+        "SnapshotId" : { "Ref" : "Snapshot" },
+        "Tags":[
+          {
+            "Key":"Name",
+            "Value":"blog"
+          },
+          {
+            "Key":"Environment",
+            "Value":"production"
+          }
+        ]
+      }
+    },
+    "InstanceEC2":{
+      "Type":"AWS::EC2::Instance",
+      "Metadata" : {
+        "AWS::CloudFormation::Init" : {
+          "config" : {
+            "sources" : {
+              "/tmp/" : "https://github.com/carlessistare/aws-ghost/tarball/master"
+            }
+          }
+        }
+      },
+      "Properties":{
+        "ImageId":{
+          "Fn::FindInMap":[
+            "AWSRegionArch2AMI",
+            {
+              "Ref":"AWS::Region"
+            },
+            {
+              "Fn::FindInMap":[
+                "AWSInstanceType2Arch",
+                {
+                  "Ref":"InstanceType"
+                },
+                "Arch"
+              ]
+            }
+          ]
+        },
+        "SecurityGroups":[
+          {
+            "Ref":"InstanceSecurityGroup"
+          }
+        ],
+        "InstanceType":{
+          "Ref":"InstanceType"
+        },
+        "AvailabilityZone":{
+          "Ref":"AvailabilityZone"
+        },
+        "KeyName":{
+          "Ref":"KeyName"
+        },
+        "Volumes":[
+          {
+            "Device":"/dev/sdh",
+            "VolumeId":{
+              "Ref":"VolumeData"
+            }
+          }
+        ],
+        "Tags":[
+          {
+            "Key":"Name",
+            "Value":"blog"
+          },
+          {
+            "Key":"Environment",
+            "Value":"production"
+          }
+        ],
+        "UserData" : { "Fn::Base64" : { "Fn::Join" : [ "", [
+          "#!/bin/bash -v\n",
+          "yum install -y docker git\n",
+          "pip install docker-compose\n",
+
+          "# mkfs -t ext4 /dev/sdh\n",
+          "mkdir /opt/ghost_data\n",
+          "mount /dev/sdh /opt/ghost_data\n",
+          "echo \"/dev/sdh /opt/ghost_data ext4 defaults,nofail 0 2\" >> /etc/fstab\n",
+
+          "mkdir -p /opt/ghost_data/content\n",
+          "mkdir -p /opt/ghost_data/mysql\n",
+
+          "/opt/aws/bin/cfn-init -s ", { "Ref" : "AWS::StackId" }, " -r InstanceEC2 ",
+          "  --region ", { "Ref" : "AWS::Region" }, "\n",
+
+          "/opt/aws/bin/cfn-signal -e 0 --stack ", { "Ref" : "AWS::StackName" },
+          "  --resource InstanceEC2 \n",
+
+          "cp /tmp/config.js /opt/ghost_data/content/\n",
+          "cp /tmp/docker-compose.yml /opt/ghost_data/content/\n",
+          "sed -i 's#XXXXXX#new_password#g' /opt/ghost_data/content/config.js\n",
+          "sed -i 's#XXXXXX#new_password#g' /opt/ghost_data/content/docker-compose.yml\n",
+
+          "service docker start\n",
+          "/usr/local/bin/docker-compose -f /opt/ghost_data/content/docker-compose.yml up"
+
+        ]]}}        
+      }
+    },
+    "InstanceSecurityGroup":{
+      "Type":"AWS::EC2::SecurityGroup",
+      "Properties":{
+        "GroupDescription":"Enable SSH access and HTTP access on the inbound port",
+        "SecurityGroupIngress":[
+          {
+            "IpProtocol":"tcp",
+            "FromPort":"80",
+            "ToPort":"80",
+            "CidrIp":"0.0.0.0/0"
+          },
+          {
+            "IpProtocol":"tcp",
+            "FromPort":"8080",
+            "ToPort":"8080",
+            "CidrIp":"0.0.0.0/0"
+          },
+          {
+            "IpProtocol":"tcp",
+            "FromPort":"22",
+            "ToPort":"22",
+            "CidrIp":"0.0.0.0/0"
+          }
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,28 @@
+web:
+  image: bonovox/ghost-nginx:master
+  command: npm start --production
+  volumes:
+    - /opt/ghost_data/content:/var/lib/ghost
+  ports:
+    - "80:80"
+  links:
+    - db
+
+db:
+  image: mysql
+  ports:
+    - "3306:3306"
+  volumes:
+    - /opt/ghost_data/mysql:/var/lib/mysql
+  environment:
+    - MYSQL_ROOT_PASSWORD=XXXXXX
+    - MYSQL_DATABASE=ghost
+
+phpmyadmin:
+  image: phpmyadmin/phpmyadmin
+  ports: 
+    - "8080:8080"
+  links:
+    - db
+  environment:
+    - PMA_HOST=db
